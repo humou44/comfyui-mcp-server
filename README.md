@@ -13,7 +13,7 @@ This proves everything is working.
 ### 1) Clone and set up
 
 ```bash
-git clone <repository-url>
+git clone https://github.com/joenorton/comfyui-mcp-server.git
 cd comfyui-mcp-server
 pip install -r requirements.txt
 ```
