@@ -3,6 +3,7 @@ import json
 import time
 import logging
 from typing import Any, Dict, Optional, Sequence
+from urllib.parse import quote
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("ComfyUIClient")
@@ -54,16 +55,32 @@ class ComfyUIClient:
 
         prompt_id = self._queue_workflow(workflow)
         outputs = self._wait_for_prompt(prompt_id, max_attempts=max_attempts)
-        asset_url = self._extract_first_asset_url(outputs, preferred_output_keys)
+        
+        # Extract asset info (filename, subfolder, type) - stable identity
+        asset_info = self._extract_first_asset_info(outputs, preferred_output_keys)
+        asset_url = asset_info["asset_url"]
         
         # Extract asset metadata
         asset_metadata = self._get_asset_metadata(asset_url, outputs, preferred_output_keys)
         
+        # Get full history snapshot for this prompt
+        try:
+            history = self.get_history(prompt_id)
+            comfy_history = history.get(prompt_id, {}) if history else {}
+        except Exception as e:
+            logger.warning(f"Failed to fetch history snapshot for {prompt_id}: {e}")
+            comfy_history = None
+        
         return {
             "asset_url": asset_url,
+            "filename": asset_info["filename"],
+            "subfolder": asset_info["subfolder"],
+            "folder_type": asset_info["type"],
             "prompt_id": prompt_id,
             "raw_outputs": outputs,
-            "asset_metadata": asset_metadata
+            "asset_metadata": asset_metadata,
+            "comfy_history": comfy_history,
+            "submitted_workflow": workflow
         }
     
     def _get_asset_metadata(self, asset_url: str, outputs: Dict[str, Any], preferred_output_keys: Sequence[str]) -> Dict[str, Any]:
@@ -266,3 +283,101 @@ class ComfyUIClient:
             f"No outputs matched preferred keys: {preferred_output_keys}. "
             f"Available outputs: {json.dumps({k: list(v.keys()) if isinstance(v, dict) else type(v).__name__ for k, v in outputs.items()}, indent=2)}"
         )
+    
+    def _extract_first_asset_info(self, outputs: Dict[str, Any], preferred_output_keys: Sequence[str]) -> Dict[str, Any]:
+        """Extract first asset info (filename, subfolder, type) from outputs.
+        
+        Returns dict with 'filename', 'subfolder', 'type', and 'asset_url'.
+        """
+        logger.debug("Available output keys in workflow: %s", list(outputs.keys()))
+        for node_id, node_output in outputs.items():
+            if not isinstance(node_output, dict):
+                continue
+            for key in preferred_output_keys:
+                assets = node_output.get(key)
+                if assets and isinstance(assets, list) and len(assets) > 0:
+                    asset = assets[0]
+                    if not isinstance(asset, dict):
+                        continue
+                    filename = asset.get("filename")
+                    if not filename:
+                        continue
+                    subfolder = asset.get("subfolder", "")
+                    output_type = asset.get("type", "output")
+                    
+                    # URL encode for special characters
+                    base_url = self.base_url.rstrip('/')
+                    encoded_filename = quote(filename, safe='')
+                    encoded_subfolder = quote(subfolder, safe='') if subfolder else ''
+                    
+                    if encoded_subfolder:
+                        asset_url = f"{base_url}/view?filename={encoded_filename}&subfolder={encoded_subfolder}&type={output_type}"
+                    else:
+                        asset_url = f"{base_url}/view?filename={encoded_filename}&type={output_type}"
+                    
+                    return {
+                        "filename": filename,
+                        "subfolder": subfolder,
+                        "type": output_type,
+                        "asset_url": asset_url
+                    }
+        
+        raise Exception(
+            f"No outputs matched preferred keys: {preferred_output_keys}. "
+            f"Available outputs: {json.dumps({k: list(v.keys()) if isinstance(v, dict) else type(v).__name__ for k, v in outputs.items()}, indent=2)}"
+        )
+    
+    def get_queue(self) -> Dict[str, Any]:
+        """Get current queue status from ComfyUI.
+        
+        Returns the full /queue endpoint response.
+        """
+        try:
+            response = requests.get(f"{self.base_url}/queue", timeout=10)
+            response.raise_for_status()
+            return response.json()
+        except requests.RequestException as e:
+            logger.error(f"Failed to get queue status: {e}")
+            raise Exception(f"Failed to get queue status: {e}")
+    
+    def get_history(self, prompt_id: Optional[str] = None) -> Dict[str, Any]:
+        """Get history from ComfyUI.
+        
+        Args:
+            prompt_id: Optional specific prompt ID. If None, returns full history.
+        
+        Returns:
+            History dict. If prompt_id provided, returns {prompt_id: {...}} or {} if not found.
+        """
+        try:
+            if prompt_id:
+                url = f"{self.base_url}/history/{prompt_id}"
+            else:
+                url = f"{self.base_url}/history"
+            response = requests.get(url, timeout=10)
+            response.raise_for_status()
+            return response.json()
+        except requests.RequestException as e:
+            logger.error(f"Failed to get history: {e}")
+            raise Exception(f"Failed to get history: {e}")
+    
+    def cancel_prompt(self, prompt_id: str) -> Dict[str, Any]:
+        """Cancel a queued or running prompt.
+        
+        Args:
+            prompt_id: The prompt ID to cancel.
+        
+        Returns:
+            Response from ComfyUI cancel endpoint.
+        """
+        try:
+            response = requests.post(
+                f"{self.base_url}/queue",
+                json={"delete": [prompt_id]},
+                timeout=10
+            )
+            response.raise_for_status()
+            return response.json()
+        except requests.RequestException as e:
+            logger.error(f"Failed to cancel prompt {prompt_id}: {e}")
+            raise Exception(f"Failed to cancel prompt: {e}")

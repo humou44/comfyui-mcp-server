@@ -33,7 +33,9 @@ A lightweight Python-based MCP (Model Context Protocol) server that interfaces w
 - **Inline Image Viewing**: View generated images directly in chat with `view_image`
 - **Flexible Workflows**: Add custom workflows by placing JSON files in `workflows/`
 - **Smart Defaults**: Automatic parameter defaults with configurable precedence
-- **Asset Management**: Automatic asset tracking with expiration
+- **Asset Management**: Automatic asset tracking with expiration and stable identity
+- **Job Management**: Queue status, job polling, and cancellation support
+- **Full Provenance**: Complete workflow history and parameter tracking for reproducibility
 
 ## Basic Usage
 
@@ -55,6 +57,8 @@ result = generate_image(
 # Access the result
 asset_id = result["asset_id"]        # For viewing with view_image
 asset_url = result["asset_url"]      # Direct URL to the image
+prompt_id = result["prompt_id"]      # For job polling with get_job
+filename = result["filename"]        # Stable asset identity (not URL-dependent)
 ```
 
 ### View an Image Inline
@@ -77,6 +81,41 @@ result = generate_song(
 )
 ```
 
+### Check Job Status
+
+```python
+# Generate an image (returns prompt_id)
+result = generate_image(prompt="a complex scene", steps=50)
+
+# Check if it's done
+job_status = get_job(prompt_id=result["prompt_id"])
+if job_status["status"] == "completed":
+    print("Job finished!")
+    view_image(asset_id=result["asset_id"])
+elif job_status["status"] == "running":
+    print("Still processing...")
+```
+
+### Browse Generated Assets
+
+```python
+# List recent assets
+assets = list_assets(limit=10)
+
+# Get full metadata for an asset
+metadata = get_asset_metadata(asset_id=assets["assets"][0]["asset_id"])
+print(f"Generated with workflow: {metadata['workflow_id']}")
+print(f"Parameters: {metadata['submitted_workflow']}")
+```
+
+### Check Queue Status
+
+```python
+# See what's running
+queue = get_queue_status()
+print(f"Running: {queue['running_count']}, Pending: {queue['pending_count']}")
+```
+
 ## Available Tools
 
 ### Generation Tools
@@ -87,6 +126,14 @@ result = generate_song(
 ### Viewing Tools
 
 - **`view_image`**: View generated images inline (images only, not audio/video)
+
+### Job Management Tools
+
+- **`get_queue_status`**: Check ComfyUI queue state (running/pending jobs) - provides async awareness
+- **`get_job`**: Poll job completion status by prompt_id - check if a job has finished
+- **`list_assets`**: Browse recently generated assets - enables AI memory and iteration
+- **`get_asset_metadata`**: Get full provenance and parameters for an asset - includes workflow history
+- **`cancel_job`**: Cancel a queued or running job
 
 ### Configuration Tools
 
@@ -229,6 +276,7 @@ comfyui-mcp-server/
 ├── tools/                 # MCP tool implementations
 │   ├── generation.py
 │   ├── asset.py
+│   ├── job.py             # Job management tools
 │   ├── configuration.py
 │   └── workflow.py
 ├── models/                # Data models
@@ -239,6 +287,33 @@ comfyui-mcp-server/
     └── generate_song.json
 ```
 
+## Return Values
+
+### generate_image / generate_song
+
+All generation tools return:
+
+```python
+{
+    "asset_id": "uuid",              # For viewing with view_image
+    "asset_url": "http://...",       # Direct URL to asset
+    "prompt_id": "comfy_prompt_id",  # For job polling with get_job
+    "filename": "image_12345.png",   # Stable identity (not URL-dependent)
+    "subfolder": "",                 # Asset subfolder (usually empty)
+    "folder_type": "output",         # Asset type (usually "output")
+    "workflow_id": "generate_image", # Workflow used
+    "mime_type": "image/png",        # Asset MIME type
+    "width": 512,                    # Image width (if applicable)
+    "height": 512,                   # Image height (if applicable)
+    "bytes_size": 123456             # File size in bytes
+}
+```
+
+**Key improvements:**
+- `prompt_id`: Use with `get_job()` to poll completion status
+- `filename`, `subfolder`, `folder_type`: Stable identity that works across different ComfyUI URLs
+- Asset URLs are computed from stable identity, making the system robust to hostname/port changes
+
 ## Notes
 
 - Ensure your models exist in `<ComfyUI_dir>/models/checkpoints/`
@@ -246,6 +321,8 @@ comfyui-mcp-server/
 - Workflows are auto-discovered - no code changes needed
 - Assets expire after 24 hours (configurable)
 - `view_image` only supports images (PNG, JPEG, WebP, GIF)
+- Asset identity uses `(filename, subfolder, type)` instead of URL for robustness
+- Full workflow history is stored for provenance and reproducibility
 
 ## Documentation
 

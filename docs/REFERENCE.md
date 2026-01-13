@@ -58,7 +58,11 @@ generate_image(
   "asset_id": "uuid-string",
   "asset_url": "http://localhost:8188/view?filename=...",
   "image_url": "http://localhost:8188/view?filename=...",
+  "filename": "ComfyUI_00265_.png",
+  "subfolder": "",
+  "folder_type": "output",
   "workflow_id": "generate_image",
+  "prompt_id": "uuid-string",
   "tool": "generate_image",
   "mime_type": "image/png",
   "width": 512,
@@ -119,7 +123,11 @@ generate_song(
 {
   "asset_id": "uuid-string",
   "asset_url": "http://localhost:8188/view?filename=...",
+  "filename": "ComfyUI_00001_.mp3",
+  "subfolder": "",
+  "folder_type": "output",
   "workflow_id": "generate_song",
+  "prompt_id": "uuid-string",
   "tool": "generate_song",
   "mime_type": "audio/mpeg",
   "bytes_size": 1234567

@@ -15,7 +15,8 @@ from managers.defaults_manager import DefaultsManager
 from managers.workflow_manager import WorkflowManager
 from tools.asset import register_asset_tools
 from tools.configuration import register_configuration_tools
-from tools.generation import register_workflow_generation_tools
+from tools.generation import register_workflow_generation_tools, register_regenerate_tool
+from tools.job import register_job_tools
 from tools.workflow import register_workflow_tools
 
 # Configure logging
@@ -33,7 +34,7 @@ comfyui_url = os.getenv("COMFYUI_URL", "http://localhost:8188")
 comfyui_client = ComfyUIClient(comfyui_url)
 workflow_manager = WorkflowManager(WORKFLOW_DIR)
 defaults_manager = DefaultsManager(comfyui_client)
-asset_registry = AssetRegistry(ttl_hours=ASSET_TTL_HOURS)
+asset_registry = AssetRegistry(ttl_hours=ASSET_TTL_HOURS, comfyui_base_url=comfyui_url)
 
 
 # Define application context (for future use)
@@ -71,6 +72,8 @@ register_configuration_tools(mcp, comfyui_client, defaults_manager)
 register_workflow_tools(mcp, workflow_manager, comfyui_client, defaults_manager, asset_registry)
 register_asset_tools(mcp, asset_registry)
 register_workflow_generation_tools(mcp, workflow_manager, comfyui_client, defaults_manager, asset_registry)
+register_regenerate_tool(mcp, comfyui_client, asset_registry)
+register_job_tools(mcp, comfyui_client, asset_registry)
 
 if __name__ == "__main__":
     # Check if running as MCP command (stdio) or standalone (streamable-http)

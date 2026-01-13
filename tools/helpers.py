@@ -13,7 +13,8 @@ def register_and_build_response(
     workflow_id: str,
     asset_registry,
     tool_name: Optional[str] = None,
-    return_inline_preview: bool = False
+    return_inline_preview: bool = False,
+    session_id: Optional[str] = None
 ) -> Dict[str, Any]:
     """Helper function to register asset and build response data.
     
@@ -25,32 +26,43 @@ def register_and_build_response(
         asset_registry: AssetRegistry instance
         tool_name: Optional tool name (for workflow-backed tools)
         return_inline_preview: Whether to include inline preview
+        session_id: Optional session identifier for conversation filtering
     
     Returns:
         Response data dict with asset_id, asset_url, metadata, etc.
     """
-    # Register asset in registry
+    # Register asset in registry using stable identity
     asset_metadata = result.get("asset_metadata", {})
     metadata = {"workflow_id": workflow_id}
     if tool_name:
         metadata["tool"] = tool_name
     
     asset_record = asset_registry.register_asset(
-        asset_url=result["asset_url"],
+        filename=result.get("filename", ""),
+        subfolder=result.get("subfolder", ""),
+        folder_type=result.get("folder_type", "output"),
         workflow_id=workflow_id,
         prompt_id=result.get("prompt_id", ""),
         mime_type=asset_metadata.get("mime_type"),
         width=asset_metadata.get("width"),
         height=asset_metadata.get("height"),
         bytes_size=asset_metadata.get("bytes_size"),
-        metadata=metadata
+        comfy_history=result.get("comfy_history"),
+        submitted_workflow=result.get("submitted_workflow"),
+        metadata=metadata,
+        session_id=session_id
     )
     
     # Build response data
+    # Use asset_record.asset_url (computed from stable identity)
+    asset_url = asset_record.asset_url or result.get("asset_url", "")
     response_data = {
         "asset_id": asset_record.asset_id,
-        "asset_url": result["asset_url"],
-        "image_url": result["asset_url"],  # Backward compatibility
+        "asset_url": asset_url,
+        "image_url": asset_url,  # Backward compatibility
+        "filename": asset_record.filename,  # Stable identity
+        "subfolder": asset_record.subfolder,  # Stable identity
+        "folder_type": asset_record.folder_type,  # Stable identity
         "workflow_id": workflow_id,
         "prompt_id": result.get("prompt_id"),
         "mime_type": asset_record.mime_type,
@@ -68,8 +80,13 @@ def register_and_build_response(
             # Only generate preview for images
             supported_types = ("image/png", "image/jpeg", "image/jpg", "image/webp", "image/gif")
             if asset_record.mime_type in supported_types:
+                # Use asset URL (computed from stable identity)
+                preview_url = asset_url
+                if not preview_url:
+                    # Fallback: compute from stable identity
+                    preview_url = asset_record.get_asset_url(asset_registry.comfyui_base_url)
                 # Use new encoding function with conservative budget
-                image_bytes = fetch_asset_bytes(asset_record.asset_url)
+                image_bytes = fetch_asset_bytes(preview_url)
                 cache_key = get_cache_key(asset_record.asset_id, 256, 70)
                 encoded = encode_preview_for_mcp(
                     image_bytes,

@@ -80,7 +80,8 @@ def register_workflow_tools(
                 workflow_id,
                 asset_registry,
                 tool_name=None,
-                return_inline_preview=return_inline_preview
+                return_inline_preview=return_inline_preview,
+                session_id=None  # Session tracking can be added via request context in the future
             )
         except Exception as exc:
             logger.exception("Workflow '%s' failed", workflow_id)

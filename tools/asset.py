@@ -53,16 +53,23 @@ def register_asset_tools(
         if not asset_record:
             return {"error": "Asset not found or expired"}
         
+        # Get asset URL (computed from stable identity)
+        asset_url = asset_record.asset_url or asset_record.get_asset_url(asset_registry.comfyui_base_url)
+        
         # If metadata mode, return info only
         if mode == "metadata":
             return {
                 "asset_id": asset_record.asset_id,
-                "asset_url": asset_record.asset_url,
+                "asset_url": asset_url,
+                "filename": asset_record.filename,
+                "subfolder": asset_record.subfolder,
+                "folder_type": asset_record.folder_type,
                 "mime_type": asset_record.mime_type,
                 "width": asset_record.width,
                 "height": asset_record.height,
                 "bytes_size": asset_record.bytes_size,
                 "workflow_id": asset_record.workflow_id,
+                "prompt_id": asset_record.prompt_id,
                 "created_at": asset_record.created_at.isoformat(),
                 "expires_at": asset_record.expires_at.isoformat() if asset_record.expires_at else None
             }
@@ -89,8 +96,9 @@ def register_asset_tools(
         
         # Process image for inline viewing
         try:
-            # Fetch image bytes
-            image_bytes = fetch_asset_bytes(asset_record.asset_url)
+            # Fetch image bytes using computed URL
+            image_url = asset_url
+            image_bytes = fetch_asset_bytes(image_url)
             
             # Encode with new function (accepts bytes directly)
             cache_key = get_cache_key(asset_id, max_dim, 70)  # Use quality=70 for cache key
