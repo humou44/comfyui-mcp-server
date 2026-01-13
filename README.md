@@ -10,7 +10,15 @@ You run the server, connect a client, and issue tool calls. Everything else is o
 
 This proves everything is working.
 
-### 1) Start ComfyUI
+### 1) Clone and set up
+
+```bash
+git clone <repository-url>
+cd comfyui-mcp-server
+pip install -r requirements.txt
+```
+
+### 2) Start ComfyUI
 
 Make sure ComfyUI is installed and running locally.
 
@@ -19,12 +27,11 @@ cd <ComfyUI_dir>
 python main.py --port 8188
 ```
 
-### 2) Run the MCP server
+### 3) Run the MCP server
 
-From this repository:
+From the repository directory:
 
 ```bash
-pip install -r requirements.txt
 python server.py
 ```
 
