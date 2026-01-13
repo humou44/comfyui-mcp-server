@@ -6,9 +6,12 @@ Complete technical reference for ComfyUI MCP Server tools, parameters, and behav
 
 - [Generation Tools](#generation-tools)
 - [Viewing Tools](#viewing-tools)
+- [Job Management Tools](#job-management-tools)
+- [Asset Management Tools](#asset-management-tools)
 - [Configuration Tools](#configuration-tools)
 - [Workflow Tools](#workflow-tools)
 - [Parameters](#parameters)
+- [Return Values](#return-values)
 - [Error Handling](#error-handling)
 - [Limits and Constraints](#limits-and-constraints)
 
@@ -203,6 +206,296 @@ view_image(asset_id=result["asset_id"])
 
 # Get metadata only
 metadata = view_image(asset_id=result["asset_id"], mode="metadata")
+```
+
+## Job Management Tools
+
+### get_queue_status
+
+Check the current state of the ComfyUI job queue.
+
+**Signature:**
+```python
+get_queue_status() -> dict
+```
+
+**Returns:**
+```json
+{
+  "running_count": 1,
+  "pending_count": 2,
+  "running": [
+    {
+      "prompt_id": "uuid-string",
+      "status": "running"
+    }
+  ],
+  "pending": [
+    {
+      "prompt_id": "uuid-string",
+      "status": "pending"
+    }
+  ]
+}
+```
+
+**Use Cases:**
+- Check if ComfyUI is busy before submitting new jobs
+- Monitor queue depth for async awareness
+- Determine if a job is still queued vs running
+
+**Examples:**
+```python
+queue = get_queue_status()
+if queue["pending_count"] > 5:
+    print("Queue is backed up, consider waiting")
+```
+
+### get_job
+
+Poll the completion status of a specific job by prompt ID.
+
+**Signature:**
+```python
+get_job(prompt_id: str) -> dict
+```
+
+**Parameters:**
+- `prompt_id` (str): Prompt ID returned from generation tools
+
+**Returns:**
+```json
+{
+  "status": "completed",
+  "prompt_id": "uuid-string"
+}
+```
+
+**Status Values:**
+- `"pending"`: Job is queued but not yet running
+- `"running"`: Job is currently executing
+- `"completed"`: Job finished successfully
+- `"error"`: Job failed (check ComfyUI logs)
+
+**Examples:**
+```python
+result = generate_image(prompt="complex scene", steps=50)
+job = get_job(prompt_id=result["prompt_id"])
+
+while job["status"] in ["pending", "running"]:
+    time.sleep(1)
+    job = get_job(prompt_id=result["prompt_id"])
+
+if job["status"] == "completed":
+    view_image(asset_id=result["asset_id"])
+```
+
+### cancel_job
+
+Cancel a queued or running job.
+
+**Signature:**
+```python
+cancel_job(prompt_id: str) -> dict
+```
+
+**Parameters:**
+- `prompt_id` (str): Prompt ID of the job to cancel
+
+**Returns:**
+```json
+{
+  "success": true,
+  "message": "Job cancelled"
+}
+```
+
+**Error Response:**
+```json
+{
+  "error": "Job not found or already completed"
+}
+```
+
+**Examples:**
+```python
+result = generate_image(prompt="long task")
+# ... decide to cancel ...
+cancel_job(prompt_id=result["prompt_id"])
+```
+
+## Asset Management Tools
+
+### list_assets
+
+Browse recently generated assets with optional filtering.
+
+**Signature:**
+```python
+list_assets(
+    limit: int | None = None,
+    workflow_id: str | None = None,
+    session_id: str | None = None
+) -> dict
+```
+
+**Parameters:**
+- `limit` (int, optional): Maximum number of assets to return. Default: 10
+- `workflow_id` (str, optional): Filter by workflow ID (e.g., `"generate_image"`)
+- `session_id` (str, optional): Filter by session ID for conversation isolation
+
+**Returns:**
+```json
+{
+  "assets": [
+    {
+      "asset_id": "uuid-string",
+      "asset_url": "http://localhost:8188/view?filename=...",
+      "filename": "ComfyUI_00265_.png",
+      "workflow_id": "generate_image",
+      "created_at": "2024-01-01T12:00:00",
+      "mime_type": "image/png",
+      "width": 512,
+      "height": 512
+    }
+  ],
+  "count": 1,
+  "limit": 10
+}
+```
+
+**Use Cases:**
+- Browse recent generations for AI agent memory
+- Filter by workflow to see only images or only audio
+- Filter by session for conversation-scoped asset isolation
+
+**Examples:**
+```python
+# List recent images
+images = list_assets(workflow_id="generate_image", limit=5)
+
+# List assets from current conversation
+session_assets = list_assets(session_id="current-session-id")
+```
+
+### get_asset_metadata
+
+Get complete provenance and parameters for a specific asset.
+
+**Signature:**
+```python
+get_asset_metadata(asset_id: str) -> dict
+```
+
+**Parameters:**
+- `asset_id` (str): Asset ID returned from generation tools
+
+**Returns:**
+```json
+{
+  "asset_id": "uuid-string",
+  "asset_url": "http://localhost:8188/view?filename=...",
+  "filename": "ComfyUI_00265_.png",
+  "subfolder": "",
+  "folder_type": "output",
+  "workflow_id": "generate_image",
+  "mime_type": "image/png",
+  "width": 512,
+  "height": 512,
+  "bytes_size": 497648,
+  "created_at": "2024-01-01T12:00:00",
+  "expires_at": "2024-01-02T12:00:00",
+  "submitted_workflow": {
+    "3": {
+      "inputs": {
+        "text": "a beautiful sunset",
+        "width": 512,
+        "height": 512
+      }
+    }
+  },
+  "comfy_history": [
+    {
+      "prompt": [...],
+      "outputs": {...}
+    }
+  ]
+}
+```
+
+**Key Fields:**
+- `submitted_workflow`: Exact workflow JSON that was submitted (enables `regenerate`)
+- `comfy_history`: Complete ComfyUI execution history
+- `created_at` / `expires_at`: Asset lifecycle timestamps
+
+**Use Cases:**
+- Inspect exact parameters used for an asset
+- Retrieve workflow data for regeneration
+- Debug generation issues with full provenance
+
+**Examples:**
+```python
+metadata = get_asset_metadata(asset_id="abc123")
+print(f"Generated with: {metadata['workflow_id']}")
+print(f"Parameters: {metadata['submitted_workflow']}")
+```
+
+### regenerate
+
+Regenerate an existing asset with optional parameter overrides.
+
+**Signature:**
+```python
+regenerate(
+    asset_id: str,
+    param_overrides: dict | None = None,
+    seed: int | None = None
+) -> dict
+```
+
+**Parameters:**
+- `asset_id` (str): Asset ID to regenerate
+- `param_overrides` (dict, optional): Parameter overrides (e.g., `{"steps": 30, "cfg": 10.0}`)
+- `seed` (int, optional): New random seed (use `-1` for auto-generated)
+
+**Returns:**
+Same schema as generation tools (new asset with new `asset_id`)
+
+**Behavior:**
+- Uses stored `submitted_workflow` from original asset
+- Applies `param_overrides` to modify specific parameters
+- All other parameters remain unchanged from original generation
+- Returns a new asset (original is not modified)
+
+**Error Response:**
+```json
+{
+  "error": "No workflow data stored for this asset. Cannot regenerate."
+}
+```
+
+**Examples:**
+```python
+# Generate initial image
+result = generate_image(prompt="a sunset", steps=20)
+
+# Regenerate with higher quality
+regenerate_result = regenerate(
+    asset_id=result["asset_id"],
+    param_overrides={"steps": 30, "cfg": 10.0}
+)
+
+# Regenerate with different prompt
+regenerate_result = regenerate(
+    asset_id=result["asset_id"],
+    param_overrides={"prompt": "a beautiful sunset, oil painting style"}
+)
+
+# Regenerate with new seed
+regenerate_result = regenerate(
+    asset_id=result["asset_id"],
+    seed=-1
+)
 ```
 
 ## Configuration Tools
@@ -410,6 +703,48 @@ run_workflow(
 )
 ```
 
+### Advanced: Workflow Metadata
+
+For advanced control over workflow behavior, create a `.meta.json` file alongside your workflow JSON file.
+
+**File Structure:**
+```
+workflows/
+├── my_workflow.json
+└── my_workflow.meta.json
+```
+
+**Metadata Schema:**
+```json
+{
+  "name": "My Custom Workflow",
+  "description": "Does something cool",
+  "defaults": {
+    "steps": 30,
+    "cfg": 7.5
+  },
+  "constraints": {
+    "width": {"min": 64, "max": 2048, "step": 64},
+    "height": {"min": 64, "max": 2048, "step": 64},
+    "steps": {"min": 1, "max": 100}
+  }
+}
+```
+
+**Fields:**
+- `name` (str, optional): Human-readable workflow name
+- `description` (str, optional): Workflow description shown in tool listings
+- `defaults` (dict, optional): Default parameter values for this workflow
+- `constraints` (dict, optional): Parameter validation constraints
+  - `min` (number): Minimum allowed value
+  - `max` (number): Maximum allowed value
+  - `step` (number): Step size for numeric parameters
+
+**Behavior:**
+- Metadata defaults override global defaults for this workflow only
+- Constraints validate parameter values when `run_workflow` is called
+- If metadata file is missing, workflow still works with global defaults
+
 ## Parameters
 
 ### Type System
@@ -436,11 +771,137 @@ Parameters are typed and automatically coerced:
 
 ### Default Precedence
 
-1. **Per-call values** (highest priority)
-2. **Runtime defaults** (`set_defaults` tool)
-3. **Config file** (`~/.config/comfy-mcp/config.json`)
-4. **Environment variables** (`COMFY_MCP_DEFAULT_*`)
-5. **Hardcoded defaults** (lowest priority)
+1. **Per-call values** (highest priority) - Explicitly provided in tool calls
+2. **Runtime defaults** (`set_defaults` tool) - Ephemeral, lost on restart
+3. **Config file** (`~/.config/comfy-mcp/config.json`) - Persistent across restarts
+4. **Environment variables** (`COMFY_MCP_DEFAULT_*`) - System-level configuration
+5. **Hardcoded defaults** (lowest priority) - Built-in sensible values
+
+### Configuration File
+
+Create `~/.config/comfy-mcp/config.json` for persistent defaults:
+
+```json
+{
+  "defaults": {
+    "image": {
+      "model": "sd_xl_base_1.0.safetensors",
+      "width": 1024,
+      "height": 1024,
+      "steps": 30,
+      "cfg": 7.5,
+      "sampler_name": "dpmpp_2m",
+      "scheduler": "normal",
+      "denoise": 1.0,
+      "negative_prompt": "blurry, low quality"
+    },
+    "audio": {
+      "model": "ace_step_v1_3.5b.safetensors",
+      "seconds": 30,
+      "steps": 60,
+      "cfg": 5.0,
+      "lyrics_strength": 0.99
+    },
+    "video": {
+      "width": 1280,
+      "height": 720,
+      "steps": 20,
+      "cfg": 8.0,
+      "duration": 5,
+      "fps": 16
+    }
+  }
+}
+```
+
+### Environment Variables
+
+**Server Configuration:**
+- `COMFYUI_URL`: ComfyUI server URL (default: `http://localhost:8188`)
+- `COMFY_MCP_WORKFLOW_DIR`: Workflow directory path (default: `./workflows`)
+- `COMFY_MCP_ASSET_TTL_HOURS`: Asset expiration time in hours (default: 24)
+
+**Default Values:**
+- `COMFY_MCP_DEFAULT_IMAGE_MODEL`: Default image model name
+- `COMFY_MCP_DEFAULT_AUDIO_MODEL`: Default audio model name
+- `COMFY_MCP_DEFAULT_VIDEO_MODEL`: Default video model name
+- `COMFY_MCP_DEFAULT_IMAGE_WIDTH`: Default image width (integer)
+- `COMFY_MCP_DEFAULT_IMAGE_HEIGHT`: Default image height (integer)
+- `COMFY_MCP_DEFAULT_IMAGE_STEPS`: Default image steps (integer)
+- `COMFY_MCP_DEFAULT_IMAGE_CFG`: Default image CFG scale (float)
+- `COMFY_MCP_DEFAULT_AUDIO_SECONDS`: Default audio duration (integer)
+- `COMFY_MCP_DEFAULT_AUDIO_STEPS`: Default audio steps (integer)
+
+Environment variables take precedence over config file but are overridden by runtime defaults and per-call values.
+
+## Return Values
+
+### MCP Protocol Response Format
+
+When calling tools via the MCP protocol (JSON-RPC), the response is wrapped in the MCP format:
+
+```json
+{
+  "result": {
+    "content": [
+      {
+        "type": "text",
+        "text": "{...tool return value as JSON string...}"
+      }
+    ],
+    "isError": false
+  }
+}
+```
+
+The actual tool return value is serialized as a JSON string in `result.content[0].text`. You need to parse this JSON string to access the tool's return data.
+
+**Note:** This documentation shows the unwrapped tool return values (what's inside the JSON string), not the MCP protocol wrapper.
+
+### Generation Tools Return Schema
+
+All generation tools (`generate_image`, `generate_song`, `regenerate`, `run_workflow`) return:
+
+```json
+{
+  "asset_id": "uuid-string",
+  "asset_url": "http://localhost:8188/view?filename=ComfyUI_00265_.png&subfolder=&type=output",
+  "image_url": "http://localhost:8188/view?filename=ComfyUI_00265_.png&subfolder=&type=output",
+  "filename": "ComfyUI_00265_.png",
+  "subfolder": "",
+  "folder_type": "output",
+  "workflow_id": "generate_image",
+  "prompt_id": "uuid-string",
+  "tool": "generate_image",
+  "mime_type": "image/png",
+  "width": 512,
+  "height": 512,
+  "bytes_size": 497648,
+  "inline_preview_base64": "data:image/webp;base64,..."
+}
+```
+
+**Field Descriptions:**
+- `asset_id` (str): Unique identifier for the asset, use with `view_image` and `regenerate`
+- `asset_url` (str): Direct URL to access the asset from ComfyUI
+- `image_url` (str): Alias for `asset_url` (for image assets)
+- `filename` (str): Stable filename identifier (not URL-dependent)
+- `subfolder` (str): Asset subfolder path (usually empty)
+- `folder_type` (str): Asset type, typically `"output"`
+- `workflow_id` (str): Workflow that generated this asset
+- `prompt_id` (str): ComfyUI prompt ID, use with `get_job()` to poll completion
+- `tool` (str): Tool name that generated this asset
+- `mime_type` (str): MIME type of the asset (e.g., `"image/png"`, `"audio/mpeg"`)
+- `width` (int, optional): Image width in pixels (images only)
+- `height` (int, optional): Image height in pixels (images only)
+- `bytes_size` (int): File size in bytes
+- `inline_preview_base64` (str, optional): Base64-encoded thumbnail (if `return_inline_preview=true`)
+
+**Key Points:**
+- `asset_id` is the primary identifier for follow-up operations
+- `filename`, `subfolder`, and `folder_type` form a stable identity that survives hostname/port changes
+- `prompt_id` enables job status polling via `get_job()`
+- Asset URLs are computed from stable identity, making the system robust to configuration changes
 
 ## Error Handling
 

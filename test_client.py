@@ -99,7 +99,7 @@ def list_available_tools() -> list:
 
 def call_tool(tool_name: str, arguments: Dict[str, Any]) -> Optional[dict]:
     """Call an MCP tool with the given arguments."""
-    print(f"\n📞 Calling tool '{tool_name}'")
+    print(f"\n  Calling tool '{tool_name}'")
     print(f"Arguments: {json.dumps(arguments, indent=2)}")
 
     result = _make_request("tools/call", {"name": tool_name, "arguments": arguments}, request_id=2)
@@ -112,9 +112,25 @@ def call_tool(tool_name: str, arguments: Dict[str, Any]) -> Optional[dict]:
         return None
 
     if "result" in result:
+        result_data = result["result"]
         print(f"\n✅ Response from server:")
-        print(json.dumps(result["result"], indent=2))
-        return result["result"]
+        print(json.dumps(result_data, indent=2))
+        
+        # Handle nested content structure (MCP response format)
+        # Response may have content array with text field containing JSON string
+        if "content" in result_data and isinstance(result_data["content"], list) and len(result_data["content"]) > 0:
+            first_content = result_data["content"][0]
+            if isinstance(first_content, dict) and "text" in first_content:
+                try:
+                    # Parse the JSON string from the text field
+                    parsed_text = json.loads(first_content["text"])
+                    return parsed_text
+                except (json.JSONDecodeError, TypeError):
+                    # If parsing fails, fall through to return result_data as-is
+                    pass
+        
+        # Return result_data directly if not in nested format
+        return result_data
 
     print("\n⚠️  Unexpected response format:")
     print(json.dumps(result, indent=2))
@@ -133,7 +149,7 @@ def test_generate_image():
     print_section("ComfyUI MCP Server Test Client")
 
     # List available tools
-    print("\n1️⃣  Listing available tools...")
+    print("\n1)  Listing available tools...")
     tools = list_available_tools()
 
     if not tools:
@@ -156,9 +172,9 @@ def test_generate_image():
         return
 
     # Call the tool
-    print(f"\n2️⃣  Testing tool '{tool_name}'...")
+    print(f"\n2)  Testing tool '{tool_name}'...")
     arguments = {
-        "prompt": "an english mastiff dog, mouth closed, standing majestically atop a large boulder, bright shiny day, forest background",
+        "prompt": "an english mastiff dog, mouth closed, standing majestically in a small stream, bright shiny day, forest background",
         "width": 512,
         "height": 512,
     }
@@ -169,10 +185,16 @@ def test_generate_image():
     print_section("Test Results")
     if result:
         print("✅ Test completed successfully!")
-        if "asset_url" in result:
-            print(f"\n📎 Generated asset URL: {result['asset_url']}")
-        elif "image_url" in result:
-            print(f"\n📎 Generated image URL: {result['image_url']}")
+        
+        # Extract URL (prefer asset_url, fallback to image_url)
+        url = result.get("asset_url") or result.get("image_url")
+        
+        if url:
+            print(f"\n  Generated asset URL: {url}")
+            # Final one-line URL for easy selection/clicking
+            print("\n" + "─" * 60)
+            print(f"  View your image: {url}")
+            print("─" * 60)
     else:
         print("❌ Test failed. Check the error messages above.")
 
