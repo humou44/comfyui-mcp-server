@@ -90,6 +90,8 @@ Create a project-scoped `.mcp.json` file:
 }
 ```
 
+**Note:** Some clients use `"type": "http"` instead of `"streamable-http"`. Both work with this server. If auto-discovery doesn't work, try changing the type field.
+
 Restart your AI client. You can now call tools such as:
 
 * `generate_image`
@@ -281,7 +283,7 @@ comfyui-mcp-server/
 - Verify server shows "Server running at http://127.0.0.1:9000/mcp" in the console
 - Test server directly: `curl http://127.0.0.1:9000/mcp` (should return MCP response)
 - Check `.mcp.json` is in project root (or correct location for your client)
-- Verify transport type is `"streamable-http"` (not `"http"` or `"sse"`)
+- Try both `"type": "streamable-http"` and `"type": "http"` - both are supported
 - For Cursor-specific issues, see [docs/MCP_CONFIG_README.md](docs/MCP_CONFIG_README.md)
 
 **Tools not appearing:**
