@@ -1,92 +1,318 @@
 # ComfyUI MCP Server
 
-A lightweight Python-based MCP (Model Context Protocol) server that interfaces with a local [ComfyUI](https://github.com/comfyanonymous/ComfyUI) instance to generate images programmatically via AI agent requests.
+> Generate and refine AI images/audio/video through natural conversation
 
-## Overview
+A lightweight MCP (Model Context Protocol) server that lets AI agents generate and iteratively refine images, audio, and video using a local ComfyUI instance.
 
-This project enables AI agents to send image generation requests to ComfyUI using the MCP protocol over WebSocket. It supports:
-- Flexible workflow selection (e.g., `basic_api_test.json`).
-- Dynamic parameters: `prompt`, `width`, `height`, and `model`.
-- Returns image URLs served by ComfyUI.
+You run the server, connect a client, and issue tool calls. Everything else is optional depth.
 
-## Prerequisites
+---
 
-- **Python 3.10+**
-- **ComfyUI**: Installed and running locally (e.g., on `localhost:8188`).
-- **Dependencies**: `requests`, `websockets`, `mcp` (install via pip).
+## Quick Start (2–3 minutes)
 
-## Setup
+This proves everything is working.
 
-1. **Clone the Repository**:
-   git clone <your-repo-url>
-   cd comfyui-mcp-server
+### 1) Clone and set up
 
-2. **Install Dependencies**:
+```bash
+git clone https://github.com/joenorton/comfyui-mcp-server.git
+cd comfyui-mcp-server
+pip install -r requirements.txt
+```
 
-   pip install requests websockets mcp
+### 2) Start ComfyUI
 
+Make sure ComfyUI is installed and running locally.
 
-3. **Start ComfyUI**:
-- Install ComfyUI (see [ComfyUI docs](https://github.com/comfyanonymous/ComfyUI)).
-- Run it on port 8188:
-  ```
-  cd <ComfyUI_dir>
-  python main.py --port 8188
-  ```
+```bash
+cd <ComfyUI_dir>
+python main.py --port 8188
+```
 
-4. **Prepare Workflows**:
-- Place API-format workflow files (e.g., `basic_api_test.json`) in the `workflows/` directory.
-- Export workflows from ComfyUI’s UI with “Save (API Format)” (enable dev mode in settings).
+### 3) Run the MCP server
 
-## Usage
+From the repository directory:
 
-1. **Run the MCP Server**:
-   python server.py
+```bash
+python server.py
+```
 
-- Listens on `ws://localhost:9000`.
+The server listens at:
 
-2. **Test with the Client**:
-   python client.py
+```
+http://127.0.0.1:9000/mcp
+```
 
-- Sends a sample request: `"a dog wearing sunglasses"` with `512x512` using `sd_xl_base_1.0.safetensors`.
-- Output example:
-  ```
-  Response from server:
-  {
-    "image_url": "http://localhost:8188/view?filename=ComfyUI_00001_.png&subfolder=&type=output"
+### 4) Verify it works (no AI client required)
+
+Run the included test client:
+
+```bash
+# Use default prompt
+python test_client.py
+
+# Or provide your own prompt
+python test_client.py -p "a beautiful sunset over mountains"
+python test_client.py --prompt "a cat on a mat"
+```
+
+`test_client.py` will:
+
+* connect to the MCP server
+* list available tools
+* fetch and display server defaults (width, height, steps, model, etc.)
+* run `generate_image` with your prompt (or a default)
+* automatically use server defaults for all other parameters
+* print the resulting asset information
+
+If this step succeeds, the system is working.
+
+**Note:** The test client respects server defaults configured via config files, environment variables, or `set_defaults` calls. Only the `prompt` parameter is required; all other parameters use server defaults automatically.
+
+That’s it.
+
+---
+
+## Use with an AI Agent (Cursor / Claude / n8n)
+
+Once the server is running, you can connect it to an AI client.
+
+Create a project-scoped `.mcp.json` file:
+
+```json
+{
+  "mcpServers": {
+    "comfyui-mcp-server": {
+      "type": "streamable-http",
+      "url": "http://127.0.0.1:9000/mcp"
+    }
   }
-  ```
+}
+```
 
-3. **Custom Requests**:
-- Modify `client.py`’s `payload` to change `prompt`, `width`, `height`, `workflow_id`, or `model`.
-- Example:
-  ```
-  "params": json.dumps({
-      "prompt": "a cat in space",
-      "width": 768,
-      "height": 768,
-      "workflow_id": "basic_api_test",
-      "model": "v1-5-pruned-emaonly.ckpt"
-  })
-  ```
+**Note:** Some clients use `"type": "http"` instead of `"streamable-http"`. Both work with this server. If auto-discovery doesn't work, try changing the type field.
+
+Restart your AI client. You can now call tools such as:
+
+* `generate_image`
+* `view_image`
+* `regenerate`
+* `get_job`
+* `list_assets`
+
+This is the primary intended usage mode.
+
+---
+
+## What You Can Do After It Works
+
+Once you’ve confirmed the server runs and a client can connect, the system supports:
+
+* Iterative refinement via `regenerate` (no re-prompting)
+* Explicit asset identity for reliable follow-ups
+* Job polling and cancellation for long-running generations
+* Optional image injection into the AI’s context (`view_image`)
+* Auto-discovered ComfyUI workflows with parameter exposure
+* Configurable defaults to avoid repeating common settings
+
+Everything below builds on the same basic loop you just tested.
+
+## Migration Notes (Previous Versions)
+
+If you’ve used earlier versions of this project, a few things have changed.
+
+### What’s the Same
+- You still run a local MCP server that delegates execution to ComfyUI
+- Workflows are still JSON files placed in the `workflows/` directory
+- Image generation behavior is unchanged at its core
+
+### What’s New
+- **Streamable HTTP transport** replaces the older WebSocket-based approach
+- **Explicit job management** (`get_job`, `get_queue_status`, `cancel_job`)
+- **Asset identity** instead of ad-hoc URLs (stable across hostname changes)
+- **Iteration support** via `regenerate` (replay with parameter overrides)
+- **Optional visual feedback** for agents via `view_image`
+- **Configurable defaults** to avoid repeating common parameters
+
+### What Changed Conceptually
+Earlier versions were a thin request/response bridge.
+The current version is built around **iteration** and **stateful control loops**.
+
+You can still generate an image with a single call, but you now have the option to:
+- refer back to specific outputs
+- refine results without re-specifying everything
+- poll and cancel long-running jobs
+- let AI agents inspect generated images directly
+
+### Looking for the Old Behavior?
+If you want the minimal, single-shot behavior from earlier versions:
+- run `test_client.py` (this mirrors the original usage pattern)
+- call `generate_image` with just a prompt (server defaults handle the rest)
+- ignore the additional tools
+
+No migration is required unless you want the new capabilities.
+
+## Available Tools
+
+### Generation Tools
+
+- **`generate_image`**: Generate images (requires `prompt`)
+- **`generate_song`**: Generate audio (requires `tags` and `lyrics`)
+- **`regenerate`**: Regenerate an existing asset with optional parameter overrides (requires `asset_id`)
+
+### Viewing Tools
+
+- **`view_image`**: View generated images inline (images only, not audio/video)
+
+### Job Management Tools
+
+- **`get_queue_status`**: Check ComfyUI queue state (running/pending jobs) - provides async awareness
+- **`get_job`**: Poll job completion status by prompt_id - check if a job has finished
+- **`list_assets`**: Browse recently generated assets - enables AI memory and iteration
+- **`get_asset_metadata`**: Get full provenance and parameters for an asset - includes workflow history
+- **`cancel_job`**: Cancel a queued or running job
+
+### Configuration Tools
+
+- **`list_models`**: List available ComfyUI models
+- **`get_defaults`**: Get current default values
+- **`set_defaults`**: Set default values (with optional persistence)
+
+### Workflow Tools
+
+- **`list_workflows`**: List all available workflows
+- **`run_workflow`**: Run any workflow with custom parameters
+
+## Custom Workflows
+
+Add custom workflows by placing JSON files in the `workflows/` directory. Workflows are automatically discovered and exposed as MCP tools.
+
+### Workflow Placeholders
+
+Use `PARAM_*` placeholders in workflow JSON to expose parameters:
+
+- `PARAM_PROMPT` → `prompt: str` (required)
+- `PARAM_INT_STEPS` → `steps: int` (optional)
+- `PARAM_FLOAT_CFG` → `cfg: float` (optional)
+
+**Example:**
+```json
+{
+  "3": {
+    "inputs": {
+      "text": "PARAM_PROMPT",
+      "steps": "PARAM_INT_STEPS"
+    }
+  }
+}
+```
+
+The tool name is derived from the filename (e.g., `my_workflow.json` → `my_workflow` tool).
+
+---
+
+## Configuration
+
+The server supports configurable defaults to avoid repeating common parameters. Defaults can be set via:
+
+- **Runtime defaults**: Use `set_defaults` tool (ephemeral, lost on restart)
+- **Config file**: `~/.config/comfy-mcp/config.json` (persistent)
+- **Environment variables**: `COMFY_MCP_DEFAULT_*` prefixed variables
+
+Defaults are resolved in priority order: per-call values → runtime defaults → config file → environment variables → hardcoded defaults.
+
+For complete configuration details, see [docs/REFERENCE.md](docs/REFERENCE.md#parameters).
+
+---
+
+## Detailed Reference
+
+Complete parameter lists, return schemas, configuration options, and advanced workflow metadata are documented in:
+
+- **[API Reference](docs/REFERENCE.md)** - Complete tool reference, parameters, return values, and configuration
+- **[Architecture](docs/ARCHITECTURE.md)** - Design decisions and system overview
 
 ## Project Structure
 
-- `server.py`: MCP server with WebSocket transport and lifecycle support.
-- `comfyui_client.py`: Interfaces with ComfyUI’s API, handles workflow queuing.
-- `client.py`: Test client for sending MCP requests.
-- `workflows/`: Directory for API-format workflow JSON files.
+```
+comfyui-mcp-server/
+├── server.py              # Main entry point
+├── comfyui_client.py      # ComfyUI API client
+├── asset_processor.py     # Image processing utilities
+├── test_client.py         # Test client
+├── managers/              # Core managers
+│   ├── workflow_manager.py
+│   ├── defaults_manager.py
+│   └── asset_registry.py
+├── tools/                 # MCP tool implementations
+│   ├── generation.py
+│   ├── asset.py
+│   ├── job.py             # Job management tools
+│   ├── configuration.py
+│   └── workflow.py
+├── models/                # Data models
+│   ├── workflow.py
+│   └── asset.py
+└── workflows/             # Workflow JSON files
+    ├── generate_image.json
+    └── generate_song.json
+```
 
 ## Notes
 
-- Ensure your chosen `model` (e.g., `v1-5-pruned-emaonly.ckpt`) exists in `<ComfyUI_dir>/models/checkpoints/`.
-- The MCP SDK lacks native WebSocket transport; this uses a custom implementation.
-- For custom workflows, adjust node IDs in `comfyui_client.py`’s `DEFAULT_MAPPING` if needed.
+- The server binds to localhost by default. Do not expose it publicly without authentication or a reverse proxy.
+- Ensure your models exist in `<ComfyUI_dir>/models/checkpoints/`
+- Server uses **streamable-http** transport (HTTP-based, not WebSocket)
+- Workflows are auto-discovered - no code changes needed
+- Assets expire after 24 hours (configurable)
+- `view_image` only supports images (PNG, JPEG, WebP, GIF)
+- Asset identity uses `(filename, subfolder, type)` instead of URL for robustness
+- Full workflow history is stored for provenance and reproducibility
+- `regenerate` uses stored workflow data to recreate assets with parameter overrides
+- Session isolation: `list_assets` can filter by session for clean AI agent context
+
+## Troubleshooting
+
+**Server won't start:**
+- Check ComfyUI is running on port 8188 (default)
+- Verify Python 3.8+ is installed (`python --version`)
+- Check all dependencies are installed: `pip install -r requirements.txt`
+- Check server logs for specific error messages
+
+**Client can't connect:**
+- Verify server shows "Server running at http://127.0.0.1:9000/mcp" in the console
+- Test server directly: `curl http://127.0.0.1:9000/mcp` (should return MCP response)
+- Check `.mcp.json` is in project root (or correct location for your client)
+- Try both `"type": "streamable-http"` and `"type": "http"` - both are supported
+- For Cursor-specific issues, see [docs/MCP_CONFIG_README.md](docs/MCP_CONFIG_README.md)
+
+**Tools not appearing:**
+- Check `workflows/` directory has JSON files with `PARAM_*` placeholders
+- Check server logs for workflow parsing errors
+- Verify ComfyUI has required custom nodes installed (if using custom workflows)
+- Restart the MCP server after adding new workflows
+
+**Asset not found errors:**
+- Assets expire after 24 hours by default (configurable via `COMFY_MCP_ASSET_TTL_HOURS`)
+- Assets are lost on server restart (ephemeral by design)
+- Use `get_asset_metadata` to verify asset exists before using `regenerate`
+- Check server logs to see if asset was registered successfully
+
+## Known Limitations (v1.0)
+
+- **Ephemeral asset registry**: `asset_id` references are only valid while the MCP server is running (and until TTL expiry). After restart, previously-issued `asset_id`s can’t be resolved, and regenerate will fail for those assets.
 
 ## Contributing
 
-Feel free to submit issues or PRs to enhance flexibility (e.g., dynamic node mapping, progress streaming).
+Issues and pull requests are welcome! See [CONTRIBUTING.md](CONTRIBUTING.md) for development guidelines.
+
+## Acknowledgements
+
+- [@venetanji](https://github.com/venetanji) - streamable-http foundation & PARAM_* system
+
+## Maintainer
+[@joenorton](https://github.com/joenorton)
 
 ## License
 
-Apache License
+Apache License 2.0

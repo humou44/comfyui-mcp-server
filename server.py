@@ -1,23 +1,142 @@
-import asyncio
-import json
+"""ComfyUI MCP Server - Main entry point"""
+
 import logging
-from typing import AsyncIterator
+import os
+import sys
+import time
 from contextlib import asynccontextmanager
-import websockets
+from pathlib import Path
+from typing import AsyncIterator
+
+import requests
+
 from mcp.server.fastmcp import FastMCP
+
 from comfyui_client import ComfyUIClient
+from managers.asset_registry import AssetRegistry
+from managers.defaults_manager import DefaultsManager
+from managers.workflow_manager import WorkflowManager
+from tools.asset import register_asset_tools
+from tools.configuration import register_configuration_tools
+from tools.generation import register_workflow_generation_tools, register_regenerate_tool
+from tools.job import register_job_tools
+from tools.workflow import register_workflow_tools
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("MCP_Server")
 
-# Global ComfyUI client (fallback since context isn’t available)
-comfyui_client = ComfyUIClient("http://localhost:8188")
+# Configuration paths
+WORKFLOW_DIR = Path(os.getenv("COMFY_MCP_WORKFLOW_DIR", str(Path(__file__).parent / "workflows")))
+
+# Asset registry configuration
+ASSET_TTL_HOURS = int(os.getenv("COMFY_MCP_ASSET_TTL_HOURS", "24"))
+
+# ComfyUI connection configuration
+COMFYUI_URL = os.getenv("COMFYUI_URL", "http://localhost:8188")
+COMFYUI_MAX_RETRIES = 5  # Number of retry attempts
+COMFYUI_INITIAL_DELAY = 2  # Initial delay in seconds
+COMFYUI_MAX_DELAY = 16  # Maximum delay in seconds
+
+
+def print_startup_banner():
+    """Print a nice startup banner for the server."""
+    print("\n" + "=" * 70)
+    print("🚀 ComfyUI-MCP-Server".center(70))
+    print("=" * 70)
+    print(f"  Connecting to ComfyUI at: {COMFYUI_URL}")
+    print(f"  Workflow directory: {WORKFLOW_DIR}")
+    print(f"  Asset TTL: {ASSET_TTL_HOURS} hours")
+    print("=" * 70 + "\n")
+
+
+def check_comfyui_available(base_url: str) -> bool:
+    """Check if ComfyUI is available by attempting to fetch model list.
+    
+    Returns True if ComfyUI is responding, False otherwise.
+    """
+    try:
+        response = requests.get(f"{base_url}/object_info/CheckpointLoaderSimple", timeout=5)
+        if response.status_code == 200:
+            # Try to parse the response to ensure it's valid
+            data = response.json()
+            checkpoint_info = data.get("CheckpointLoaderSimple", {})
+            if isinstance(checkpoint_info, dict):
+                return True
+        return False
+    except (requests.RequestException, ValueError, KeyError):
+        return False
+
+
+def wait_for_comfyui(base_url: str, max_retries: int = COMFYUI_MAX_RETRIES, 
+                     initial_delay: float = COMFYUI_INITIAL_DELAY,
+                     max_delay: float = COMFYUI_MAX_DELAY) -> bool:
+    """Wait for ComfyUI to become available with exponential backoff.
+    
+    Args:
+        base_url: ComfyUI base URL
+        max_retries: Maximum number of retry attempts
+        initial_delay: Initial delay in seconds before first retry
+        max_delay: Maximum delay in seconds between retries
+    
+    Returns:
+        True if ComfyUI becomes available, False if all retries exhausted
+    """
+    print("\n" + "=" * 70)
+    print("⚠️  ALERT: ComfyUI is not available!")
+    print("=" * 70)
+    print(f"  Checking for ComfyUI at: {base_url}")
+    print(f"  Waiting for ComfyUI to start (will retry {max_retries} times)...")
+    print("=" * 70 + "\n")
+    
+    delay = initial_delay
+    for attempt in range(1, max_retries + 1):
+        logger.info(f"ComfyUI availability check (attempt {attempt}/{max_retries})...")
+        
+        if check_comfyui_available(base_url):
+            print("\n" + "=" * 70)
+            print("✅ ComfyUI is now available!")
+            print("=" * 70 + "\n")
+            logger.info("ComfyUI is available, proceeding with server startup")
+            return True
+        
+        if attempt < max_retries:
+            print(f"⏳ Attempt {attempt}/{max_retries} failed. Retrying in {delay:.1f} seconds...")
+            time.sleep(delay)
+            # Exponential backoff: double the delay, but cap at max_delay
+            delay = min(delay * 2, max_delay)
+        else:
+            print(f"❌ Attempt {attempt}/{max_retries} failed. No more retries.")
+    
+    return False
+
+
+# Print startup banner
+print_startup_banner()
+
+# Check ComfyUI availability before initializing clients
+if not check_comfyui_available(COMFYUI_URL):
+    if not wait_for_comfyui(COMFYUI_URL):
+        print("\n" + "=" * 70)
+        print("❌ ERROR: ComfyUI is not available after all retry attempts!")
+        print("=" * 70)
+        print(f"  Please ensure ComfyUI is running at: {COMFYUI_URL}")
+        print("  Start ComfyUI first, then restart this server.")
+        print("=" * 70 + "\n")
+        sys.exit(1)
+
+# Global ComfyUI client (fallback since context isn't available)
+comfyui_client = ComfyUIClient(COMFYUI_URL)
+workflow_manager = WorkflowManager(WORKFLOW_DIR)
+defaults_manager = DefaultsManager(comfyui_client)
+asset_registry = AssetRegistry(ttl_hours=ASSET_TTL_HOURS, comfyui_base_url=COMFYUI_URL)
+
 
 # Define application context (for future use)
 class AppContext:
     def __init__(self, comfyui_client: ComfyUIClient):
         self.comfyui_client = comfyui_client
+
 
 # Lifespan management (placeholder for future context support)
 @asynccontextmanager
@@ -32,56 +151,47 @@ async def app_lifespan(server: FastMCP) -> AsyncIterator[AppContext]:
         # Shutdown: Cleanup (if needed)
         logger.info("Shutting down MCP server")
 
-# Initialize FastMCP with lifespan
-mcp = FastMCP("ComfyUI_MCP_Server", lifespan=app_lifespan)
 
-# Define the image generation tool
-@mcp.tool()
-def generate_image(params: str) -> dict:
-    """Generate an image using ComfyUI"""
-    logger.info(f"Received request with params: {params}")
-    try:
-        param_dict = json.loads(params)
-        prompt = param_dict["prompt"]
-        width = param_dict.get("width", 512)
-        height = param_dict.get("height", 512)
-        workflow_id = param_dict.get("workflow_id", "basic_api_test")
-        model = param_dict.get("model", None)
+# Initialize FastMCP with lifespan and port configuration
+# Using port 9000 for consistency with previous version
+# Enable stateless_http to avoid requiring session management
+mcp = FastMCP(
+    "ComfyUI_MCP_Server",
+    lifespan=app_lifespan,
+    port=9000,
+    stateless_http=True
+)
 
-        # Use global comfyui_client (since mcp.context isn’t available)
-        image_url = comfyui_client.generate_image(
-            prompt=prompt,
-            width=width,
-            height=height,
-            workflow_id=workflow_id,
-            model=model
-        )
-        logger.info(f"Returning image URL: {image_url}")
-        return {"image_url": image_url}
-    except Exception as e:
-        logger.error(f"Error: {e}")
-        return {"error": str(e)}
-
-# WebSocket server
-async def handle_websocket(websocket, path):
-    logger.info("WebSocket client connected")
-    try:
-        async for message in websocket:
-            request = json.loads(message)
-            logger.info(f"Received message: {request}")
-            if request.get("tool") == "generate_image":
-                result = generate_image(request.get("params", ""))
-                await websocket.send(json.dumps(result))
-            else:
-                await websocket.send(json.dumps({"error": "Unknown tool"}))
-    except websockets.ConnectionClosed:
-        logger.info("WebSocket client disconnected")
-
-# Main server loop
-async def main():
-    logger.info("Starting MCP server on ws://localhost:9000...")
-    async with websockets.serve(handle_websocket, "localhost", 9000):
-        await asyncio.Future()  # Run forever
+# Register all MCP tools
+register_configuration_tools(mcp, comfyui_client, defaults_manager)
+register_workflow_tools(mcp, workflow_manager, comfyui_client, defaults_manager, asset_registry)
+register_asset_tools(mcp, asset_registry)
+register_workflow_generation_tools(mcp, workflow_manager, comfyui_client, defaults_manager, asset_registry)
+register_regenerate_tool(mcp, comfyui_client, asset_registry)
+register_job_tools(mcp, comfyui_client, asset_registry)
 
 if __name__ == "__main__":
-    asyncio.run(main())
+    # Check if running as MCP command (stdio) or standalone (streamable-http)
+    # When run as command by MCP client (like Cursor), use stdio transport
+    # When run standalone, use streamable-http for HTTP access
+    if len(sys.argv) > 1 and sys.argv[1] == "--stdio":
+        print("\n" + "=" * 70)
+        print("✅ Server Ready".center(70))
+        print("=" * 70)
+        print(f"  Transport: stdio (for MCP clients)")
+        print(f"✅ ComfyUI verified at: {COMFYUI_URL}")
+        print("=" * 70 + "\n")
+        logger.info("Starting MCP server with stdio transport (for MCP clients)")
+        logger.info(f"ComfyUI verified at: {COMFYUI_URL}")
+        mcp.run(transport="stdio")
+    else:
+        print("\n" + "=" * 70)
+        print("✅ Server Ready".center(70))
+        print("=" * 70)
+        print(f"  Transport: streamable-http")
+        print(f"  Endpoint: http://127.0.0.1:9000/mcp")
+        print(f"✅ ComfyUI verified at: {COMFYUI_URL}")
+        print("=" * 70 + "\n")
+        logger.info("Starting MCP server with streamable-http transport on http://127.0.0.1:9000/mcp")
+        logger.info(f"ComfyUI verified at: {COMFYUI_URL}")
+        mcp.run(transport="streamable-http")
