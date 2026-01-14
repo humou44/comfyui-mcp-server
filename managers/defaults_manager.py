@@ -26,6 +26,10 @@ class DefaultsManager:
             "video": {}
         }
         self._config_defaults = self._load_config_defaults()
+        # Model validation state
+        self._available_models_set: set[str] = set()
+        self._invalid_models: Dict[str, str] = {}  # Maps namespace -> model name for invalid defaults
+        self._default_sources: Dict[str, Dict[str, str]] = {}  # Tracks source per namespace/key
         self._hardcoded_defaults = {
             "image": {
                 "width": 512,
@@ -56,12 +60,13 @@ class DefaultsManager:
                 "sampler_name": "euler",
                 "scheduler": "normal",
                 "denoise": 1.0,
-                "model": "wan2.2_vae.safetensors",
                 "negative_prompt": "text, watermark",
                 "duration": 5,
                 "fps": 16,
             }
         }
+        # Validate default models at startup (non-fatal, logs warnings)
+        self.validate_all_defaults()
     
     def _load_config_defaults(self) -> Dict[str, Dict[str, Any]]:
         """Load defaults from config file"""
@@ -158,7 +163,97 @@ class DefaultsManager:
             self._runtime_defaults[namespace] = {}
         self._runtime_defaults[namespace].update(defaults)
         
+        # If a model was set and it's valid, clear any invalid model flag
+        if "model" in defaults and validate_models:
+            model_name = defaults["model"]
+            if model_name in self._available_models_set:
+                # Model is valid, clear invalid flag if it exists
+                if namespace in self._invalid_models and self._invalid_models[namespace] == model_name:
+                    del self._invalid_models[namespace]
+        
         return {"success": True, "updated": defaults}
+    
+    def refresh_model_set(self) -> None:
+        """Refresh the cached set of available models from ComfyUI client."""
+        if self.comfyui_client.available_models:
+            self._available_models_set = set(self.comfyui_client.available_models)
+        else:
+            self._available_models_set = set()
+    
+    def _get_default_source(self, namespace: str, key: str) -> str:
+        """Determine where a default value came from (runtime/config/env/hardcoded)."""
+        # Check runtime defaults (highest priority)
+        if key in self._runtime_defaults.get(namespace, {}):
+            return "runtime"
+        
+        # Check config file defaults
+        if key in self._config_defaults.get(namespace, {}):
+            return "config"
+        
+        # Check environment variables
+        env_defaults = self._get_env_defaults()
+        if key in env_defaults.get(namespace, {}):
+            return "env"
+        
+        # Check hardcoded defaults (lowest priority)
+        if key in self._hardcoded_defaults.get(namespace, {}):
+            return "hardcoded"
+        
+        return "unknown"
+    
+    def validate_default_model(self, namespace: str) -> tuple[bool, str, str]:
+        """Validate the default model for a namespace.
+        
+        Returns:
+            tuple: (is_valid, model_name, source)
+        """
+        model_name = self.get_default(namespace, "model")
+        if not model_name:
+            return (True, "", "none")  # No model default, which is valid
+        
+        source = self._get_default_source(namespace, "model")
+        
+        # Check if model is in the cached set
+        if model_name in self._available_models_set:
+            return (True, model_name, source)
+        
+        # Model not found
+        return (False, model_name, source)
+    
+    def mark_model_invalid(self, namespace: str, model: str) -> None:
+        """Mark a model as invalid for a namespace."""
+        self._invalid_models[namespace] = model
+    
+    def is_model_valid(self, namespace: str, model: str) -> bool:
+        """Check if a model is valid (cheap boolean check).
+        
+        This checks both the cached model set and the invalid models dict.
+        """
+        if not model:
+            return True  # No model specified is valid (will use default)
+        
+        # If marked as invalid, it's invalid
+        if namespace in self._invalid_models and self._invalid_models[namespace] == model:
+            return False
+        
+        # Check if in available models set
+        return model in self._available_models_set
+    
+    def validate_all_defaults(self) -> None:
+        """Validate all default models at startup and log warnings for missing ones."""
+        # Refresh model set first
+        self.refresh_model_set()
+        
+        # Validate each namespace
+        for namespace in ["image", "audio", "video"]:
+            is_valid, model_name, source = self.validate_default_model(namespace)
+            if not is_valid and model_name:
+                logger.warning(
+                    f"Default model '{model_name}' (from {source} defaults) for {namespace} namespace "
+                    f"not found in ComfyUI checkpoints. Set a valid model via `set_defaults`, "
+                    f"config file, or env var. Try `list_models` to see available checkpoints."
+                )
+                self.mark_model_invalid(namespace, model_name)
     
     def persist_defaults(self, namespace: str, defaults: Dict[str, Any]) -> Dict[str, Any]:
         """Persist defaults to config file"""

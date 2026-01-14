@@ -14,6 +14,10 @@ class ComfyUIClient:
     def __init__(self, base_url):
         self.base_url = base_url
         self.available_models = self._get_available_models()
+    
+    def refresh_models(self):
+        """Re-fetch available models and update available_models list."""
+        self.available_models = self._get_available_models()
 
     def _get_available_models(self):
         """Fetch list of available checkpoint models from ComfyUI"""
