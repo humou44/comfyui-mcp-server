@@ -116,7 +116,7 @@ def call_tool(tool_name: str, arguments: Dict[str, Any]) -> Optional[dict]:
         return None
 
     if "error" in result:
-        print(f"\n❌ Error from server:")
+        print(f"\n[X] Error from server:")
         print(json.dumps(result["error"], indent=2))
         return None
 
@@ -136,7 +136,7 @@ def call_tool(tool_name: str, arguments: Dict[str, Any]) -> Optional[dict]:
                         # If not JSON, just remove newlines for cleaner display
                         content_item["text"] = text_content.replace("\n", "").strip()
         
-        print(f"\n✅ Response from server:")
+        print(f"\n[+] Response from server:")
         print(json.dumps(result_data, indent=2))
         
         # Handle nested content structure (MCP response format)
@@ -157,7 +157,7 @@ def call_tool(tool_name: str, arguments: Dict[str, Any]) -> Optional[dict]:
         # Return result_data directly if not in nested format
         return result_data
 
-    print("\n⚠️  Unexpected response format:")
+    print("\n[!]  Unexpected response format:")
     print(json.dumps(result, indent=2))
     return None
 
@@ -178,7 +178,7 @@ def test_generate_image(prompt: Optional[str] = None):
     tools = list_available_tools()
 
     if not tools:
-        print("\n❌ No tools available. Make sure the server is running and workflows are loaded.")
+        print("\n[X] No tools available. Make sure the server is running and workflows are loaded.")
         return
 
     # Find generate_image tool or use first available
@@ -190,10 +190,10 @@ def test_generate_image(prompt: Optional[str] = None):
 
     if not tool_name and tools:
         tool_name = tools[0].get("name")
-        print(f"\n⚠️  Using first available tool '{tool_name}' instead of 'generate_image'")
+        print(f"\n[!]  Using first available tool '{tool_name}' instead of 'generate_image'")
 
     if not tool_name:
-        print("\n❌ No tools found to test.")
+        print("\n[X] No tools found to test.")
         return
 
     # Fetch server defaults
@@ -207,7 +207,7 @@ def test_generate_image(prompt: Optional[str] = None):
               f"steps={image_defaults.get('steps', 'N/A')}, "
               f"model={image_defaults.get('model', 'N/A')}")
     else:
-        print("   ⚠️  Could not fetch defaults, using fallback values")
+        print("   [!]  Could not fetch defaults, using fallback values")
         image_defaults = {"width": 512, "height": 512}
 
     # Call the tool
@@ -236,7 +236,7 @@ def test_generate_image(prompt: Optional[str] = None):
     # Display results
     print_section("Test Results")
     if result:
-        print("✅ Test completed successfully!")
+        print("[+] Test completed successfully!")
         
         # Extract URL (prefer asset_url, fallback to image_url)
         url = result.get("asset_url") or result.get("image_url")
@@ -248,7 +248,7 @@ def test_generate_image(prompt: Optional[str] = None):
             print(f"  View your image: {url}")
             print("─" * 60)
     else:
-        print("❌ Test failed. Check the error messages above.")
+        print("[X] Test failed. Check the error messages above.")
 
 
 def main():
@@ -275,10 +275,10 @@ Examples:
     try:
         test_generate_image(prompt=args.prompt)
     except KeyboardInterrupt:
-        print("\n\n⚠️  Test interrupted by user.")
+        print("\n\n[!]  Test interrupted by user.")
         sys.exit(1)
     except Exception as e:
-        print(f"\n❌ Unexpected error: {e}")
+        print(f"\n[X] Unexpected error: {e}")
         import traceback
 
         traceback.print_exc()
