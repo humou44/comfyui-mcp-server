@@ -1,0 +1,39 @@
+{
+    "10": {
+        "inputs": {
+            "image": "PARAM_IMAGE_PATH",
+            "upload": "image"
+        },
+        "class_type": "LoadImage",
+        "_meta": {
+            "title": "Load Image"
+        }
+    },
+    "13": {
+        "inputs": {
+            "upscale_method": "nearest-exact",
+            "scale_by": 2.0,
+            "image": [
+                "10",
+                0
+            ]
+        },
+        "class_type": "ImageScaleBy",
+        "_meta": {
+            "title": "Upscale Image (x2 nearest)"
+        }
+    },
+    "9": {
+        "inputs": {
+            "filename_prefix": "ComfyUI_upscale",
+            "images": [
+                "13",
+                0
+            ]
+        },
+        "class_type": "SaveImage",
+        "_meta": {
+            "title": "Save Image"
+        }
+    }
+}
