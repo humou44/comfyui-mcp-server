@@ -42,7 +42,7 @@ COMFYUI_MAX_DELAY = 16  # Maximum delay in seconds
 def print_startup_banner():
     """Print a nice startup banner for the server."""
     print("\n" + "=" * 70)
-    print("[*] ComfyUI-MCP-Server".center(70))
+    print("[INFO] ComfyUI-MCP-Server".center(70))
     print("=" * 70)
     print(f"  Connecting to ComfyUI at: {COMFYUI_URL}")
     print(f"  Workflow directory: {WORKFLOW_DIR}")
@@ -83,7 +83,7 @@ def wait_for_comfyui(base_url: str, max_retries: int = COMFYUI_MAX_RETRIES,
         True if ComfyUI becomes available, False if all retries exhausted
     """
     print("\n" + "=" * 70)
-    print("[!] ALERT: ComfyUI is not available!")
+    print("[WARN] ComfyUI is not available!")
     print("=" * 70)
     print(f"  Checking for ComfyUI at: {base_url}")
     print(f"  Waiting for ComfyUI to start (will retry {max_retries} times)...")
@@ -101,12 +101,12 @@ def wait_for_comfyui(base_url: str, max_retries: int = COMFYUI_MAX_RETRIES,
             return True
         
         if attempt < max_retries:
-            print(f"[..] Attempt {attempt}/{max_retries} failed. Retrying in {delay:.1f} seconds...")
+            print(f"[RETRY] Attempt {attempt}/{max_retries} failed. Retrying in {delay:.1f} seconds...")
             time.sleep(delay)
             # Exponential backoff: double the delay, but cap at max_delay
             delay = min(delay * 2, max_delay)
         else:
-            print(f"[X] Attempt {attempt}/{max_retries} failed. No more retries.")
+            print(f"[ERROR] Attempt {attempt}/{max_retries} failed. No more retries.")
     
     return False
 
@@ -118,7 +118,7 @@ print_startup_banner()
 if not check_comfyui_available(COMFYUI_URL):
     if not wait_for_comfyui(COMFYUI_URL):
         print("\n" + "=" * 70)
-        print("[X] ERROR: ComfyUI is not available after all retry attempts!")
+        print("[ERROR] ComfyUI is not available after all retry attempts!")
         print("=" * 70)
         print(f"  Please ensure ComfyUI is running at: {COMFYUI_URL}")
         print("  Start ComfyUI first, then restart this server.")
